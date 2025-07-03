@@ -1,5 +1,3 @@
-
-````markdown
 ## Visão Geral dos Scripts:
 
 1.  **`setupPins.m`**: Conecta à ESP32 (temporariamente para verificação e configuração inicial), define os pinos necessários e salva os **nomes dos pinos**. **O objeto `arduino` não é salvo, pois é uma conexão ativa e não pode ser persistente.**
@@ -615,4 +613,3 @@ disp('Conexão com a ESP32 fechada para este script.');
 
 ```
 ---
-```
