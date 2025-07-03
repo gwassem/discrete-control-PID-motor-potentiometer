@@ -4,17 +4,31 @@
 clc; clear all; close all; % Limpa o console, workspace e fecha figuras
 disp('--- CALIBRAÇÃO DO POTENCIÔMETRO ---');
 
-% Carrega as configurações da ESP32 do script setupPins.m
+% Carrega APENAS as definições de pinos (strings)
 try
-    load('arduinoSetup.mat', 'a', 'potPin');
-    if ~exist('a', 'var') || ~isvalid(a)
-        error('Objeto Arduino "a" não carregado ou inválido. Execute setupPins.m primeiro.');
+    load('arduinoPins.mat', 'potPin'); % Apenas 'potPin' necessário aqui
+    if ~exist('potPin', 'var')
+        error('Definições de pinos não carregadas. Execute setupPins.m primeiro.');
     end
-    disp('Configuração da ESP32 carregada com sucesso!');
+    disp('Definições de pinos carregadas com sucesso!');
 catch ME
-    disp(['ERRO ao carregar configuração: ', ME.message]);
+    disp(['ERRO ao carregar definições de pinos: ', ME.message]);
     disp('Por favor, execute setupPins.m antes de prosseguir.');
     return;
+end
+
+% --- RECRIAR O OBJETO ARDUINO NESTE SCRIPT ---
+a = []; % Inicializa 'a' como vazio
+try
+    % Substitua 'COMx' pela porta serial da sua ESP32
+    a = arduino("COMx", "ESP32 Dev Module"); % Adapte "COMx" e o nome da placa se necessário.
+    disp('Conexão com ESP32 estabelecida para este script!');
+    % Para calibração, não precisamos configurar PWM, apenas ler ADC.
+
+catch ME
+    disp(['ERRO ao reconectar à ESP32: ', ME.message]);
+    disp('Verifique se a placa está conectada e a porta COM correta.');
+    return; % Sai do script se não conseguir conectar
 end
 
 % Interação para encontrar os limites de tensão
@@ -33,8 +47,12 @@ maxVoltage = readVoltage(a, potPin);
 disp(['Tensão na posição MÁXIMA: ', num2str(maxVoltage), ' V']);
 
 % --- DEFINIR A FAIXA ANGULAR REAL DO SEU SISTEMA ---
-
-angleRangeDegrees = 3600; % <--- AJUSTE ESTE VALOR para a faixa REAL em graus do seu motor/pot!
+% Este é o valor mais importante a ser ajustado manualmente com base na sua montagem.
+% Se o seu motor, com o acoplamento do potenciômetro de 10 voltas,
+% pode girar, por exemplo, 5 voltas completas (5 * 360 = 1800 graus), use 1800.
+% Se ele tem um limite físico que é equivalente a 7.5 voltas do pot,
+% então seria 7.5 * 360 = 2700 graus.
+angleRangeDegrees = 1800; % <--- AJUSTE ESTE VALOR para a faixa REAL em graus do seu motor/pot!
 
 % Calcule a escala para converter Volts em Graus
 voltsPerDegree = (maxVoltage - minVoltage) / angleRangeDegrees;
@@ -55,7 +73,8 @@ disp(['Volts por Grau: ', num2str(voltsPerDegree), ' V/grau']);
 save('potentiometerCalibration.mat', 'minVoltage', 'maxVoltage', 'angleRangeDegrees', 'voltsPerDegree');
 disp('Parâmetros de calibração salvos em potentiometerCalibration.mat.');
 
-% Função anônima para converter tensão para graus (para referência)
-voltageToDegrees = @(voltage) (voltage - minVoltage) / voltsPerDegree;
-
 disp('--- CALIBRAÇÃO CONCLUÍDA ---');
+
+% --- NO FINAL DO SCRIPT, SEMPRE LIMPE O OBJETO 'a' ---
+clear a;
+disp('Conexão com a ESP32 fechada para este script.');

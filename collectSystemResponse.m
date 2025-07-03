@@ -5,66 +5,107 @@
 clc; clear all; close all; % Limpa o console, workspace e fecha figuras
 disp('--- COLETANDO DADOS DE RESPOSTA DO SISTEMA ---');
 
-% Carrega as configurações da ESP32 e calibração do potenciômetro
+% Carrega as definições de pinos (strings) e os parâmetros de calibração do potenciômetro
 try
-    load('arduinoSetup.mat', 'a', 'potPin', 'motorPin1', 'motorPin2');
+    load('arduinoPins.mat', 'potPin', 'motorPin1', 'motorPin2');
     load('potentiometerCalibration.mat', 'minVoltage', 'maxVoltage', 'angleRangeDegrees', 'voltsPerDegree');
-    if ~exist('a', 'var') || ~isvalid(a)
-        error('Objeto Arduino "a" não carregado ou inválido. Execute setupPins.m primeiro.');
+    if ~exist('potPin', 'var') || ~exist('minVoltage', 'var')
+        error('Dependências não carregadas. Execute setupPins.m e calibratePotentiometer.m primeiro.');
     end
-    disp('Configurações carregadas com sucesso!');
+    disp('Configurações e calibração carregadas com sucesso!');
 catch ME
-    disp(['ERRO ao carregar configurações: ', ME.message]);
+    disp(['ERRO ao carregar configurações ou calibração: ', ME.message]);
     disp('Por favor, execute setupPins.m e calibratePotentiometer.m antes de prosseguir.');
     return;
+end
+
+% --- RECRIAR O OBJETO ARDUINO NESTE SCRIPT ---
+a = []; % Inicializa 'a' como vazio
+try
+    % Substitua 'COMx' pela porta serial da sua ESP32
+    a = arduino("COMx", "ESP32 Dev Module");
+    disp('Conexão com ESP32 estabelecida para este script!');
+
+    % Configurar os pinos do motor como PWM (necessário aqui para controlar o motor)
+    configurePin(a, motorPin1, "PWM");
+    configurePin(a, motorPin2, "PWM");
+    disp('Pinos do motor configurados como PWM.');
+
+catch ME
+    disp(['ERRO ao reconectar ou configurar a ESP32: ', ME.message]);
+    disp('Verifique se a placa está conectada e a porta COM correta.');
+    return; % Sai do script se não conseguir conectar
 end
 
 % Função anônima para converter tensão para graus
 voltageToDegrees = @(voltage) (voltage - minVoltage) / voltsPerDegree;
 
 % --- Parâmetros da Coleta ---
-Ts = 0.05; % Período de amostragem (segundos)
+Ts = 0.05; % Período de amostragem (segundos). Ajuste conforme a dinâmica do seu motor!
 numSamples = 1000; % Número total de amostras a coletar (ajuste conforme necessário)
+                   % Ex: 1000 amostras * 0.05s/amostra = 50 segundos de dados.
 
 % Arrays para armazenar os dados
 inputPWM = zeros(numSamples, 1);       % Sinal de controle (PWM duty cycle)
 outputPosition = zeros(numSamples, 1); % Posição lida (em graus)
 timeVector = zeros(numSamples, 1);     % Vetor de tempo
 
-disp('Iniciando a coleta... O motor irá girar.');
+disp('Iniciando a coleta de dados de resposta do sistema... O motor irá girar.');
 disp('Pressione Ctrl+C na Command Window para parar a qualquer momento.');
 tic; % Inicia temporizador
 
-% --- Geração do Sinal de Entrada (Rampa e Degrau) ---
-% Vamos usar uma sequência que inclui uma rampa seguida de um degrau.
-% Isso ajuda a excitar a dinâmica do sistema para a identificação.
+% --- Geração do Sinal de Entrada (Exemplo: Rampa, Degrau para frente, Degrau para trás) ---
+% Este sinal é projetado para "excitar" a dinâmica do motor em diferentes regimes.
+% Você pode ajustar os níveis de PWM e durações.
+pwmLevelStart = 0.2; % Nível inicial de PWM (evitar 0 para sistemas com atrito)
+pwmLevelMid = 0.5;   % Nível intermediário
+pwmLevelEnd = 0.8;   % Nível mais alto
 
-pwmLevel1 = 0.3; % Primeiro nível de PWM (ex: 30%)
-pwmLevel2 = 0.7; % Segundo nível de PWM (ex: 70%)
-rampDuration = 200; % Número de amostras para a rampa (ex: 200 amostras * 0.05s = 10s de rampa)
-stepDuration = 400; % Número de amostras para o degrau (ex: 400 amostras * 0.05s = 20s de degrau)
+segment1Duration = 200; % PWM constante no nívelStart
+segment2Duration = 300; % Rampa de pwmLevelStart para pwmLevelMid
+segment3Duration = 300; % PWM constante no nívelMid
+segment4Duration = 200; % Rampa de pwmLevelMid para pwmLevelEnd
+segment5Duration = 300; % PWM constante no nívelEnd
+segment6Duration = 200; % Rampa para 0
+totalDurationInSamples = segment1Duration + segment2Duration + segment3Duration + segment4Duration + segment5Duration + segment6Duration;
+
+if numSamples < totalDurationInSamples
+    warning('numSamples é menor que a duração total dos segmentos. Ajustando numSamples.');
+    numSamples = totalDurationInSamples;
+end
 
 % Garante que o motor comece parado
 writePWMDutyCycle(a, motorPin1, 0);
 writePWMDutyCycle(a, motorPin2, 0);
-pause(1); % Pequena pausa
+pause(1); % Pequena pausa para garantir que o motor esteja parado e estabilizado
 
 for k = 1:numSamples
     currentPWM = 0; % Sinal PWM atual
 
-    if k <= rampDuration
+    if k <= segment1Duration
+        currentPWM = pwmLevelStart; % Degrau inicial
+    elseif k <= segment1Duration + segment2Duration
         % Rampa crescente
-        currentPWM = (k / rampDuration) * pwmLevel1;
-    elseif k <= rampDuration + stepDuration
-        % Degrau para frente
-        currentPWM = pwmLevel2;
-    elseif k <= rampDuration + stepDuration + rampDuration
-        % Rampa decrescente para zero (ou para outro lado, se quiser testar)
-        currentPWM = pwmLevel2 - ((k - (rampDuration + stepDuration)) / rampDuration) * pwmLevel2;
+        rampProgress = (k - segment1Duration) / segment2Duration;
+        currentPWM = pwmLevelStart + rampProgress * (pwmLevelMid - pwmLevelStart);
+    elseif k <= segment1Duration + segment2Duration + segment3Duration
+        currentPWM = pwmLevelMid; % Degrau intermediário
+    elseif k <= segment1Duration + segment2Duration + segment3Duration + segment4Duration
+        % Rampa crescente
+        rampProgress = (k - (segment1Duration + segment2Duration + segment3Duration)) / segment4Duration;
+        currentPWM = pwmLevelMid + rampProgress * (pwmLevelEnd - pwmLevelMid);
+    elseif k <= segment1Duration + segment2Duration + segment3Duration + segment4Duration + segment5Duration
+        currentPWM = pwmLevelEnd; % Degrau alto
+    elseif k <= segment1Duration + segment2Duration + segment3Duration + segment4Duration + segment5Duration + segment6Duration
+        % Rampa decrescente de volta a zero
+        rampProgress = (k - (segment1Duration + segment2Duration + segment3Duration + segment4Duration + segment5Duration)) / segment6Duration;
+        currentPWM = pwmLevelEnd * (1 - rampProgress);
     else
-        % Degrau zero (parar)
-        currentPWM = 0;
+        currentPWM = 0; % Sinal zero após os segmentos definidos
     end
+
+    % Garantir que o PWM esteja dentro dos limites [0, 1]
+    currentPWM = max(0, min(currentPWM, 1));
 
     % Aplicar o sinal PWM em um sentido para a coleta
     writePWMDutyCycle(a, motorPin1, currentPWM);
@@ -79,7 +120,7 @@ for k = 1:numSamples
     outputPosition(k) = currentPosition;
     timeVector(k) = toc;
 
-    % Exibir progresso
+    % Exibir progresso (opcional)
     if mod(k, 50) == 0
         fprintf('Amostra %d/%d: PWM = %.2f, Posição = %.2f graus\n', k, numSamples, currentPWM, currentPosition);
     end
@@ -124,4 +165,9 @@ disp('Agora, você pode usar a System Identification Toolbox do MATLAB:');
 disp('1. Digite "ident" na Command Window do MATLAB.');
 disp('2. Na janela da Toolbox, vá em "Import data" -> "Time domain data".');
 disp('3. Selecione "From workspace" e importe a variável "data".');
-disp('4. Use as ferramentas da Toolbox para estimar um modelo do seu sistema.');
+disp('4. Use as ferramentas da Toolbox para estimar um modelo do seu sistema (ex: função de transferência).');
+disp('   Considere um modelo de 1ª ou 2ª ordem com possível atraso de tempo (dead time).');
+
+% --- NO FINAL DO SCRIPT, SEMPRE LIMPE O OBJETO 'a' ---
+clear a;
+disp('Conexão com a ESP32 fechada para este script.');
