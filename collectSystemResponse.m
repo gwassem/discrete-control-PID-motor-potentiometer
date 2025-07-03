@@ -1,20 +1,26 @@
 % collectSystemResponse.m
-% Script para coletar dados de resposta do sistema (motor e potenciômetro).
-% Os dados serão usados para a System Identification Toolbox.
+% Script para coletar dados de resposta do sistema a um sinal de degrau.
+% Os dados coletados serão usados para identificação do sistema no System Identification Toolbox.
 
 clc; clear all; close all; % Limpa o console, workspace e fecha figuras
-disp('--- COLETANDO DADOS DE RESPOSTA DO SISTEMA ---');
+disp('--- INICIANDO COLETA DE DADOS DE RESPOSTA DO SISTEMA ---');
 
-% Carrega as definições de pinos (strings) e os parâmetros de calibração do potenciômetro
+% Carrega as definições de pinos (strings) e calibração do potenciômetro
 try
-    load('arduinoPins.mat', 'potPin', 'motorPin1', 'motorPin2');
-    load('potentiometerCalibration.mat', 'minVoltage', 'maxVoltage', 'angleRangeDegrees', 'voltsPerDegree');
+    load('arduinoPins.mat', 'potPin', 'motorPin1', 'motorPin2'); % Carrega pinos do setupPins.m
+    load('potentiometerCalibration.mat', 'minVoltage', 'maxVoltage', 'angleRangeDegrees', 'voltsPerDegree'); % Carrega calibração do novo arquivo
     if ~exist('potPin', 'var') || ~exist('minVoltage', 'var')
         error('Dependências não carregadas. Execute setupPins.m e calibratePotentiometer.m primeiro.');
     end
     disp('Configurações e calibração carregadas com sucesso!');
+    % --- NOVOS LOGS: Verificar pinos e calibração carregados ---
+    fprintf('  Pino do Potenciômetro (potPin): %s\n', potPin);
+    fprintf('  Pino do Motor 1 (motorPin1): %s\n', motorPin1);
+    fprintf('  Pino do Motor 2 (motorPin2): %s\n', motorPin2);
+    fprintf('  Calibração: minVoltage=%.4fV, maxVoltage=%.4fV, angleRangeDegrees=%.2f, voltsPerDegree=%.4fV/deg\n', ...
+            minVoltage, maxVoltage, angleRangeDegrees, voltsPerDegree);
 catch ME
-    disp(['ERRO ao carregar configurações ou calibração: ', ME.message]);
+    disp(['ERRO ao carregar definições: ', ME.message]);
     disp('Por favor, execute setupPins.m e calibratePotentiometer.m antes de prosseguir.');
     return;
 end
@@ -23,151 +29,181 @@ end
 a = []; % Inicializa 'a' como vazio
 try
     % Substitua 'COMx' pela porta serial da sua ESP32
-    a = arduino("COMx", "ESP32 Dev Module");
+    % Certifique-se que o nome do módulo ESP32 está correto!
+    a = arduino("COM9", "ESP32-WROOM-DevKitV1"); % OU "ESP32 Dev Module" - Verifique o nome exato!
     disp('Conexão com ESP32 estabelecida para este script!');
-
-    % Configurar os pinos do motor como PWM (necessário aqui para controlar o motor)
-    configurePin(a, motorPin1, "PWM");
-    configurePin(a, motorPin2, "PWM");
-    disp('Pinos do motor configurados como PWM.');
-
+    % --- NOVO LOG: Verificar se o objeto Arduino é válido ---
+    if isvalid(a)
+        disp('  Objeto Arduino criado e válido.');
+    else
+        disp('  AVISO: Objeto Arduino não é válido após a criação.');
+        clear a; return;
+    end
 catch ME
-    disp(['ERRO ao reconectar ou configurar a ESP32: ', ME.message]);
-    disp('Verifique se a placa está conectada e a porta COM correta.');
+    disp(['ERRO ao conectar à ESP32: ', ME.message]);
+    disp('Verifique se a placa está conectada, os drivers instalados e a porta COM correta.');
     return; % Sai do script se não conseguir conectar
 end
 
-% Função anônima para converter tensão para graus
-voltageToDegrees = @(voltage) (voltage - minVoltage) / voltsPerDegree;
+% Configura os pinos do motor como PWM
+configurePin(a, motorPin1, "PWM");
+configurePin(a, motorPin2, "PWM");
+disp('Pinos do motor configurados como PWM.');
 
-% --- Parâmetros da Coleta ---
-Ts = 0.05; % Período de amostragem (segundos). Ajuste conforme a dinâmica do seu motor!
-numSamples = 1000; % Número total de amostras a coletar (ajuste conforme necessário)
-                   % Ex: 1000 amostras * 0.05s/amostra = 50 segundos de dados.
+% --- PARÂMETROS DO CONTROLE E DA COLETA DE DADOS ---
+Ts = 0.05; % Tempo de amostragem em segundos (50 ms)
+stabilizeTime = 10; % Tempo para estabilizar na posição inicial (segundos)
+maxPWMDutyCycle = 0.5; % <--- AUMENTADO: Aumenta a potência máxima do motor para 50%
 
-% Arrays para armazenar os dados
-inputPWM = zeros(numSamples, 1);       % Sinal de controle (PWM duty cycle)
-outputPosition = zeros(numSamples, 1); % Posição lida (em graus)
-timeVector = zeros(numSamples, 1);     % Vetor de tempo
+% Ganhos PID temporários para a coleta de dados (somente Kp, Ki e Kd são 0 para simplificar)
+tempKp = 0.02; % <--- AUMENTADO: Ganho Proporcional para resposta mais forte
+tempKi = 0;     % Ganho Integral (zero para não acumular erro)
+tempKd = 0;     % Ganho Derivativo (zero para não reagir a variações rápidas)
 
-disp('Iniciando a coleta de dados de resposta do sistema... O motor irá girar.');
-disp('Pressione Ctrl+C na Command Window para parar a qualquer momento.');
-tic; % Inicia temporizador
+% Sequência de ângulos alvo para os degraus
+targetAngles = [45, 90, 0]; % Move para 45, depois 90, e volta para 0.
 
-% --- Geração do Sinal de Entrada (Exemplo: Rampa, Degrau para frente, Degrau para trás) ---
-% Este sinal é projetado para "excitar" a dinâmica do motor em diferentes regimes.
-% Você pode ajustar os níveis de PWM e durações.
-pwmLevelStart = 0.2; % Nível inicial de PWM (evitar 0 para sistemas com atrito)
-pwmLevelMid = 0.5;   % Nível intermediário
-pwmLevelEnd = 0.8;   % Nível mais alto
+% Pre-alocação de arrays para armazenar os dados
+durationPerStep = 10; % Duração de cada degrau em segundos
+totalSamples = (stabilizeTime + length(targetAngles) * durationPerStep) / Ts;
+outputData = zeros(totalSamples, 1); % Posição do potenciômetro
+inputData = zeros(totalSamples, 1);  % Sinal de controle aplicado (PWM)
+timeData = zeros(totalSamples, 1);   % Tempo
 
-segment1Duration = 200; % PWM constante no nívelStart
-segment2Duration = 300; % Rampa de pwmLevelStart para pwmLevelMid
-segment3Duration = 300; % PWM constante no nívelMid
-segment4Duration = 200; % Rampa de pwmLevelMid para pwmLevelEnd
-segment5Duration = 300; % PWM constante no nívelEnd
-segment6Duration = 200; % Rampa para 0
-totalDurationInSamples = segment1Duration + segment2Duration + segment3Duration + segment4Duration + segment5Duration + segment6Duration;
+currentSampleIdx = 1; % Índice global para os dados
 
-if numSamples < totalDurationInSamples
-    warning('numSamples é menor que a duração total dos segmentos. Ajustando numSamples.');
-    numSamples = totalDurationInSamples;
-end
+disp('Iniciando a sequência de degraus para coleta de dados...');
+disp('Certifique-se de que o motor pode se mover livremente.');
 
-% Garante que o motor comece parado
-writePWMDutyCycle(a, motorPin1, 0);
-writePWMDutyCycle(a, motorPin2, 0);
-pause(1); % Pequena pausa para garantir que o motor esteja parado e estabilizado
+% --- Estabilização na posição inicial (0 graus) ---
+initialTarget = 0;
+fprintf('Movendo para a posição inicial (%.2f graus)...\n', initialTarget);
+startTime = tic; % Inicia o cronômetro para a estabilização
 
-for k = 1:numSamples
-    currentPWM = 0; % Sinal PWM atual
-
-    if k <= segment1Duration
-        currentPWM = pwmLevelStart; % Degrau inicial
-    elseif k <= segment1Duration + segment2Duration
-        % Rampa crescente
-        rampProgress = (k - segment1Duration) / segment2Duration;
-        currentPWM = pwmLevelStart + rampProgress * (pwmLevelMid - pwmLevelStart);
-    elseif k <= segment1Duration + segment2Duration + segment3Duration
-        currentPWM = pwmLevelMid; % Degrau intermediário
-    elseif k <= segment1Duration + segment2Duration + segment3Duration + segment4Duration
-        % Rampa crescente
-        rampProgress = (k - (segment1Duration + segment2Duration + segment3Duration)) / segment4Duration;
-        currentPWM = pwmLevelMid + rampProgress * (pwmLevelEnd - pwmLevelMid);
-    elseif k <= segment1Duration + segment2Duration + segment3Duration + segment4Duration + segment5Duration
-        currentPWM = pwmLevelEnd; % Degrau alto
-    elseif k <= segment1Duration + segment2Duration + segment3Duration + segment4Duration + segment5Duration + segment6Duration
-        % Rampa decrescente de volta a zero
-        rampProgress = (k - (segment1Duration + segment2Duration + segment3Duration + segment4Duration + segment5Duration)) / segment6Duration;
-        currentPWM = pwmLevelEnd * (1 - rampProgress);
-    else
-        currentPWM = 0; % Sinal zero após os segmentos definidos
-    end
-
-    % Garantir que o PWM esteja dentro dos limites [0, 1]
-    currentPWM = max(0, min(currentPWM, 1));
-
-    % Aplicar o sinal PWM em um sentido para a coleta
-    writePWMDutyCycle(a, motorPin1, currentPWM);
-    writePWMDutyCycle(a, motorPin2, 0); % O outro pino fica em zero para este sentido
-
-    % Ler a posição do potenciômetro
+while toc(startTime) < stabilizeTime
     currentVoltage = readVoltage(a, potPin);
-    currentPosition = voltageToDegrees(currentVoltage);
+    currentPositionDegrees = (currentVoltage - minVoltage) / voltsPerDegree;
+    % Limita a posição para o range calibrado para evitar valores absurdos
+    currentPositionDegrees = max(0, min(angleRangeDegrees, currentPositionDegrees));
 
-    % Armazenar dados
-    inputPWM(k) = currentPWM;
-    outputPosition(k) = currentPosition;
-    timeVector(k) = toc;
+    error = initialTarget - currentPositionDegrees;
+    
+    % Calcula o sinal de controle (apenas P)
+    controlSignal = tempKp * error;
 
-    % Exibir progresso (opcional)
-    if mod(k, 50) == 0
-        fprintf('Amostra %d/%d: PWM = %.2f, Posição = %.2f graus\n', k, numSamples, currentPWM, currentPosition);
+    % Aplica o sinal de controle ao motor (considerando a direção corrigida)
+    if controlSignal > 0 % Precisa aumentar o ângulo (sentido horário com D25)
+        pwmDutyCycle = min([controlSignal, maxPWMDutyCycle]);
+        writePWMDutyCycle(a, motorPin1, pwmDutyCycle); % Ativa D25
+        writePWMDutyCycle(a, motorPin2, 0);
+    elseif controlSignal < 0 % Precisa diminuir o ângulo (sentido anti-horário com D26)
+        pwmDutyCycle = min([abs(controlSignal), maxPWMDutyCycle]);
+        writePWMDutyCycle(a, motorPin1, 0);
+        writePWMDutyCycle(a, motorPin2, pwmDutyCycle); % Ativa D26
+    else % Se o erro for zero, parar o motor
+        writePWMDutyCycle(a, motorPin1, 0);
+        writePWMDutyCycle(a, motorPin2, 0);
     end
 
-    % Pausar para manter o período de amostragem
-    elapsedTime = toc - timeVector(k);
-    if elapsedTime < Ts
-        pause(Ts - elapsedTime);
+    % Armazena os dados
+    outputData(currentSampleIdx) = currentPositionDegrees;
+    inputData(currentSampleIdx) = pwmDutyCycle;
+    timeData(currentSampleIdx) = toc(startTime);
+
+    if mod(currentSampleIdx-1, 10) == 0 % Imprime a cada 10 amostras
+        fprintf('  Estabilização #%d: Pos=%.2f°, Erro=%.2f°, CtrlSig=%.3f, PWM_App=%.3f\n', ...
+                currentSampleIdx, currentPositionDegrees, error, controlSignal, pwmDutyCycle);
     end
+    
+    currentSampleIdx = currentSampleIdx + 1; % Incrementa o índice global
+    pause(Ts);
+end
+writePWMDutyCycle(a, motorPin1, 0); % Parar o motor
+writePWMDutyCycle(a, motorPin2, 0);
+fprintf('Posição inicial (%.2f graus) atingida e estabilizada.\n', initialTarget);
+pause(1); % Pequena pausa antes de iniciar os degraus
+
+% --- Aplicação dos degraus ---
+for i = 1:length(targetAngles)
+    targetAngle = targetAngles(i);
+    fprintf('Aplicando degrau para: %.2f graus\n', targetAngle);
+    startTime = tic; % Inicia o cronômetro para este degrau
+
+    while toc(startTime) < durationPerStep
+        currentVoltage = readVoltage(a, potPin);
+        currentPositionDegrees = (currentVoltage - minVoltage) / voltsPerDegree;
+        currentPositionDegrees = max(0, min(angleRangeDegrees, currentPositionDegrees));
+
+        error = targetAngle - currentPositionDegrees;
+        
+        % Calcula o sinal de controle (apenas P)
+        controlSignal = tempKp * error;
+
+        % Aplica o sinal de controle ao motor (considerando a direção corrigida)
+        if controlSignal > 0 % Precisa aumentar o ângulo (sentido horário com D25)
+            pwmDutyCycle = min([controlSignal, maxPWMDutyCycle]);
+            writePWMDutyCycle(a, motorPin1, pwmDutyCycle); % Ativa D25
+            writePWMDutyCycle(a, motorPin2, 0);
+        elseif controlSignal < 0 % Precisa diminuir o ângulo (sentido anti-horário com D26)
+            pwmDutyCycle = min([abs(controlSignal), maxPWMDutyCycle]);
+            writePWMDutyCycle(a, motorPin1, 0);
+            writePWMDutyCycle(a, motorPin2, pwmDutyCycle); % Ativa D26
+        else % Se o erro for zero, parar o motor
+            writePWMDutyCycle(a, motorPin1, 0);
+            writePWMDutyCycle(a, motorPin2, 0);
+        end
+        
+        % Armazena os dados
+        outputData(currentSampleIdx) = currentPositionDegrees;
+        inputData(currentSampleIdx) = pwmDutyCycle;
+        timeData(currentSampleIdx) = timeData(currentSampleIdx-1) + Ts; % Tempo acumulado
+        
+        if mod(currentSampleIdx - (length(targetAngles)*(i-1)*durationPerStep/Ts), 10) == 1 % Imprime a cada 10 amostras do degrau atual
+            fprintf('  Degrau %d (#%d): SP=%.2f°, Pos=%.2f°, Erro=%.2f°, CtrlSig=%.3f, PWM_App=%.3f\n', ...
+                    i, currentSampleIdx - ((i-1)*durationPerStep/Ts), targetAngle, currentPositionDegrees, error, controlSignal, pwmDutyCycle);
+        end
+        
+        currentSampleIdx = currentSampleIdx + 1; % Incrementa o índice global
+        pause(Ts);
+    end
+    writePWMDutyCycle(a, motorPin1, 0); % Parar o motor no final de cada degrau
+    writePWMDutyCycle(a, motorPin2, 0);
+    fprintf('Degrau para %.2f graus finalizado.\n', targetAngle);
+    pause(0.5); % Pequena pausa entre os degraus
 end
 
-% Parar o motor no final da coleta
-writePWMDutyCycle(a, motorPin1, 0);
-writePWMDutyCycle(a, motorPin2, 0);
+disp('Coleta de dados concluída. Salvando...');
 
-disp('Coleta de dados finalizada. Plotando e salvando...');
+% Limpar dados extras se o totalSamples foi superestimado
+outputData(currentSampleIdx:end) = [];
+inputData(currentSampleIdx:end) = [];
+timeData(currentSampleIdx:end) = [];
 
-% Plotar os dados coletados para visualização
+% Criar objeto iddata para o System Identification Toolbox
+% input: sinal de controle aplicado
+% output: posição do potenciômetro
+data = iddata(outputData, inputData, Ts);
+
+% Salvar os dados para uso posterior
+save('systemResponseData.mat', 'data');
+disp('Dados salvos em systemResponseData.mat');
+
+% Plotar os dados para visualização rápida
 figure;
 subplot(2,1,1);
-plot(timeVector, inputPWM);
-title('Sinal de Entrada (PWM)');
-xlabel('Tempo (s)');
-ylabel('PWM Duty Cycle (0-1)');
-grid on;
-
-subplot(2,1,2);
-plot(timeVector, outputPosition);
-title('Posição do Motor (Resposta do Sistema)');
+plot(data.SamplingInstants, data.OutputData);
+title('Resposta do Sistema (Posição do Potenciômetro)');
 xlabel('Tempo (s)');
 ylabel('Posição (graus)');
 grid on;
 
-% Salvar os dados para a System Identification Toolbox
-% É recomendado salvar os dados em um objeto iddata
-data = iddata(outputPosition, inputPWM, Ts);
-save('systemResponseData.mat', 'data', 'timeVector', 'inputPWM', 'outputPosition');
-disp('Dados de resposta do sistema salvos em systemResponseData.mat.');
+subplot(2,1,2);
+plot(data.SamplingInstants, data.InputData);
+title('Sinal de Controle Aplicado (PWM)');
+xlabel('Tempo (s)');
+ylabel('PWM Duty Cycle');
+grid on;
 
-disp('--- COLETANDO DADOS DE RESPOSTA CONCLUÍDA ---');
-disp('Agora, você pode usar a System Identification Toolbox do MATLAB:');
-disp('1. Digite "ident" na Command Window do MATLAB.');
-disp('2. Na janela da Toolbox, vá em "Import data" -> "Time domain data".');
-disp('3. Selecione "From workspace" e importe a variável "data".');
-disp('4. Use as ferramentas da Toolbox para estimar um modelo do seu sistema (ex: função de transferência).');
-disp('   Considere um modelo de 1ª ou 2ª ordem com possível atraso de tempo (dead time).');
-
-% --- NO FINAL DO SCRIPT, SEMPRE LIMPE O OBJETO 'a' ---
+% Fechar conexão Arduino
 clear a;
-disp('Conexão com a ESP32 fechada para este script.');
+disp('Conexão com ESP32 fechada para este script.');
