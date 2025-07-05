@@ -53,6 +53,7 @@ Este script define quais pinos da ESP32 serão usados para o potenciômetro e o 
 ```matlab
 % Executar este script primeiro
 setupPins.m
+```
 
 Observações:
 
@@ -60,35 +61,34 @@ Observações:
 
     As variáveis de pino (potPin, motorPin1, motorPin2) são salvas em arduinoPins.mat para serem carregadas pelos scripts seguintes.
 
-2. Calibração do Potenciômetro (calibratePotentiometer.m)
+### 2. Calibração do Potenciômetro (calibratePotentiometer.m)
 
 Este script calibra o potenciômetro, definindo as tensões mínima e máxima que correspondem aos 0 graus e ao ângulo máximo de rotação (e.g., 3600 graus para 10 voltas).
-Matlab
-
+```matlab
 % Executar após setupPins.m
 calibratePotentiometer.m
-
+```
 Instruções durante a execução:
 
     O script irá guiá-lo para posicionar o motor/potenciômetro na posição mínima (0 graus) e máxima (e.g., 3600 graus) para registrar as tensões correspondentes.
 
     Os parâmetros de calibração são salvos em potentiometerCalibration.mat.
 
-3. Coleta de Resposta ao Degrau (collectPWMStepResponse.m)
+### 3. Coleta de Resposta ao Degrau (collectPWMStepResponse.m)
 
 Este script aplica um degrau de PWM ao motor e coleta os dados de posição ao longo do tempo. Esses dados são cruciais para a identificação do modelo do seu sistema.
 Matlab
-
+```matlab
 % Executar após calibratePotentiometer.m
 collectPWMStepResponse.m
-
+```
 Observações:
 
     O sampleRate está definido para 0.02 segundos (50 Hz), o que proporciona uma boa resolução para a identificação do sistema.
 
     Os dados de tempo, posição e duty cycle de entrada são salvos em stepResponseData.mat.
 
-4. Identificação do Sistema e Ajuste PID
+### 4. Identificação do Sistema e Ajuste PID
 
 Após coletar os dados de resposta ao degrau, você usará o MATLAB para identificar um modelo do seu sistema e ajustar os ganhos PID.
 
@@ -96,28 +96,29 @@ A. Identificação do Modelo (System Identification Toolbox)
 
     Abra o System Identification Toolbox no MATLAB digitando ident na linha de comando.
 
-    Importe os dados de stepResponseData.mat. Selecione timeData como tempo, positionData como saída e inputDutyCycle como entrada.
+    Importe os dados de stepResponseData.mat. Selecione timeData como tempo, "positionData" como saída e "inputDutyCycle" como entrada.
 
     Utilize as ferramentas do Toolbox para identificar um modelo que represente a dinâmica do seu motor (e.g., um modelo de função de transferência de 1ª ou 2ª ordem).
 
 B. Ajuste dos Ganhos PID (PID Tuner)
 
     Uma vez que você tenha um modelo identificado (ex: G = tf(...)), abra o PID Tuner:
-    Matlab
-
+    ```matlab
     pidTuner(G)
+    ```
 
     No PID Tuner, você pode ajustar interativamente os ganhos Kp, Ki e Kd para alcançar o desempenho desejado (velocidade, overshoot, erro em regime permanente).
 
     Anote os valores finais de Kp, Ki e Kd que você determinar como ideais. Eles serão usados no próximo script.
 
-5. Controle P Básico (basicPControl.m)
+### 5. Controle P Básico (basicPControl.m)
 
 Este script implementa um controlador Proporcional simples. Ele serve como uma linha de base para comparação com o desempenho do controle PID otimizado.
-Matlab
 
+```matlab
 % Executar após calibrar e antes de testar o PID completo
 basicPControl.m
+```
 
 Observações:
 
@@ -127,26 +128,26 @@ Observações:
 
     Os dados de desempenho são salvos em basicPControlResponse.mat.
 
-6. Controle PID Completo (fullPIDControl.m)
+### 6. Controle PID Completo (fullPIDControl.m)
 
 Este é o script final que implementa o controlador PID completo, incluindo a lógica de anti-windup.
-Matlab
 
+```matlab
 % Executar após obter os ganhos PID do PID Tuner
 fullPIDControl.m
+```
 
 Passo Crítico:
 
     Antes de executar: Edite o script fullPIDControl.m e substitua os valores de exemplo de Kp, Ki e Kd pelos valores otimizados que você obteve do "PID Tuner".
 
-Matlab
-
+```matlab
 % --- PARÂMETROS DO CONTROLADOR PID ---
 % ESTES VALORES SERÃO POPULADOS COM OS RESULTADOS DO PID TUNER
 Kp = SEU_VALOR_DE_KP;   % Ganho Proporcional
 Ki = SEU_VALOR_DE_KI;   % Ganho Integral
 Kd = SEU_VALOR_DE_KD;  % Ganho Derivativo
-
+```
 Características Implementadas:
 
     Controle PID: Cálculo dos termos Proporcional, Integral e Derivativo.
@@ -157,6 +158,6 @@ Características Implementadas:
 
 Os dados de desempenho do controlador PID completo serão salvos em fullPIDControlResponse.mat.
 
-Análise e Comparação
+### Análise e Comparação
 
 Após executar basicPControl.m e fullPIDControl.m, você terá os arquivos .mat com os dados de resposta. Você pode carregá-los no MATLAB e plotar as curvas de posição e PWM para comparar visualmente o desempenho do controle P básico com o controle PID otimizado. Isso demonstrará as melhorias alcançadas com o ajuste PID.
