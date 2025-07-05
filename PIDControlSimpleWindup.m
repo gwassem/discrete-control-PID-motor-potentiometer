@@ -66,8 +66,7 @@ PWM_MAX = 0.60;         % Limite superior para o duty cycle (60% da potência m�
 PWM_MIN_ACTIVE = 0.15;  % Limite inferior para o duty cycle que garante que o motor se mova.
 
 % Setpoints (posições desejadas em graus)
-setPoints = [900, 1800]; % Exemplo: 900 graus (2.5 voltas), depois 1800 graus (5 voltas).
-                      % Certifique-se de que esses valores estejam dentro da faixa calibrada do seu potenciômetro.
+setPoints = [180, 360]; % Certifique-se de que esses valores estejam dentro da faixa calibrada do seu potenciômetro.
                       
 % Tolerância para considerar que o motor atingiu o setpoint.
 tolerance = 5; % Graus. Se o erro for menor que este valor, consideramos "atingido" (para feedback visual).

@@ -1,5 +1,85 @@
 % basicPControl.m
-% ... (código anterior, incluindo definições de PWM_MAX e PWM_MIN_ACTIVE) ...
+% Script para implementar um controle de posição de malha fechada com um
+% controlador Proporcional (P) básico.
+% Os dados coletados serão usados para comparar com o desempenho do PID tunado.
+
+clc; clear all; close all; % Limpa o console, workspace e fecha figuras
+disp('--- INICIANDO CONTROLE PROPORCIONAL BÁSICO ---');
+
+% 1. Carregar Definições de Pinos
+% Tenta carregar as variáveis de pino salvas por 'setupPins.m'.
+try
+    load('arduinoPins.mat', 'potPin', 'motorPin1', 'motorPin2');
+    if ~exist('potPin', 'var') || ~exist('motorPin1', 'var') || ~exist('motorPin2', 'var')
+        error('Pinos (potPin, motorPin1, motorPin2) não carregados. Execute setupPins.m primeiro.');
+    end
+    fprintf('Pino do Potenciômetro (potPin): %s\n', potPin);
+    fprintf('Pino do Motor IN1 (motorPin1): %s\n', motorPin1);
+    fprintf('Pino do Motor IN2 (motorPin2): %s\n', motorPin2);
+catch ME
+    disp(['ERRO ao carregar definições de pinos: ', ME.message]);
+    disp('Por favor, execute setupPins.m antes de prosseguir.');
+    return; % Sai do script se não conseguir carregar os pinos
+end
+
+% 2. Carregar Parâmetros de Calibração do Potenciômetro
+% Tenta carregar os parâmetros de calibração salvos por 'calibratePotentiometer.m'.
+try
+    load('potentiometerCalibration.mat', 'minVoltage', 'maxVoltage', 'angleRangeDegrees', 'voltsPerDegree');
+    if ~exist('minVoltage', 'var') || ~exist('voltsPerDegree', 'var')
+        error('Parâmetros de calibração não carregados. Execute calibratePotentiometer.m primeiro.');
+    end
+    fprintf('Tensão Mínima (0 graus): %.4fV\n', minVoltage);
+    fprintf('Volts por Grau: %.4fV/deg\n', voltsPerDegree);
+catch ME
+    disp(['ERRO ao carregar parâmetros de calibração: ', ME.message]);
+    disp('Por favor, execute calibratePotentiometer.m antes de prosseguir.');
+    return; % Sai do script se não conseguir carregar a calibração
+end
+
+% 3. Recriar o Objeto Arduino
+% É necessário recriar o objeto 'arduino' em cada script que interage com a placa.
+a = []; % Inicializa 'a' como vazio
+try
+    % Substitua 'COM9' pela porta serial da sua ESP32, se for diferente.
+    a = arduino("COM9", "ESP32-WROOM-DevKitV1");
+    disp('Conexão com ESP32 estabelecida para este script!');
+    % Configurar os pinos do motor como PWM novamente, para garantir.
+    configurePin(a, motorPin1, "PWM");
+    configurePin(a, motorPin2, "PWM");
+    disp('Pinos do motor configurados como PWM.');
+catch ME
+    disp(['ERRO ao conectar à ESP32 ou configurar pinos: ', ME.message]);
+    disp('Verifique se a placa está conectada e a porta COM correta.');
+    return; % Sai do script se não conseguir conectar
+end
+
+% --- Parâmetros do Controle P Básico ---
+% Ganho Proporcional (Kp): Este valor precisará ser ajustado por tentativa e erro.
+% Um Kp muito pequeno resultará em resposta lenta e grande erro em regime permanente.
+% Um Kp muito grande pode causar oscilações ou instabilidade.
+Kp = 0.005; % Valor inicial. Comece com um valor pequeno e aumente gradualmente.
+
+% --- Limites de Potência (Duty Cycle) do Motor ---
+% PWM_MAX: Limite superior para o duty cycle (60% da potência máxima).
+PWM_MAX = 0.60;
+% PWM_MIN_ACTIVE: Limite inferior para o duty cycle que garante que o motor se mova.
+% Se a potência for menor que isso (e diferente de zero), o motor pode não girar.
+% Escolha entre 0.10 (10%) ou 0.15 (15%) com base nos seus testes físicos.
+PWM_MIN_ACTIVE = 0.15; % Usando 15% como mínimo. Ajuste conforme necessário.
+
+% Setpoints (posições desejadas em graus)
+% Vamos testar dois setpoints para ver a resposta a degraus de referência.
+setPoints = [180, 360]; % Certifique-se de que esses valores estejam dentro da faixa calibrada do seu potenciômetro.
+                      
+% Tolerância para considerar que o motor atingiu o setpoint.
+tolerance = 5; % Graus. Se o erro for menor que este valor, consideramos "atingido".
+
+% Parâmetros da Coleta de Dados para Análise
+durationPerSetpoint = 15; % Tempo em segundos para manter cada setpoint e coletar dados.
+                           % Deve ser longo o suficiente para o sistema se estabilizar.
+sampleRate = 0.02;         % Intervalo de amostragem em segundos (50 Hz).
+numSamplesPerSetpoint = round(durationPerSetpoint / sampleRate);
 
 % Arrays para armazenar os dados coletados
 timeData = zeros(1, length(setPoints) * numSamplesPerSetpoint);
