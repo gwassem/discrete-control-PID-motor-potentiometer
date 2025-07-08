@@ -1,0 +1,188 @@
+% simplePositionController.m
+% Script para controle de posição do motor usando um controlador Proporcional (P).
+% Pede a posição angular desejada ao usuário e tenta alcançá-la.
+
+clc; clear all; close all; % Limpa o console, workspace e fecha figuras
+disp('--- INICIANDO CONTROLADOR DE POSIÇÃO PROPORCIONAL SIMPLES ---');
+
+% --- 1. CARREGAMENTO DE CONFIGURAÇÃO E CALIBRAÇÃO ---
+% Este script AGORA CARREGA OS VALORES de arquivos .mat.
+% Certifique-se de que 'setupPins.m' e 'calibratePotentiometer.m' foram executados
+% e salvaram os arquivos 'arduinoPins.mat' e 'potentiometerCalibration.mat'.
+
+% 1.1. Carregar Definições de Pinos
+try
+    load('arduinoPins.mat', 'potPin', 'motorPin1', 'motorPin2');
+    if ~exist('potPin', 'var') || ~exist('motorPin1', 'var') || ~exist('motorPin2', 'var')
+        error('Pinos (potPin, motorPin1, motorPin2) não carregados. Execute setupPins.m primeiro.');
+    end
+    fprintf('Pino do Potenciômetro (potPin): %s\n', potPin);
+    fprintf('Pino do Motor IN1 (motorPin1): %s\n', motorPin1);
+    fprintf('Pino do Motor IN2 (motorPin2): %s\n', motorPin2);
+catch ME
+    disp(['ERRO ao carregar definições de pinos: ', ME.message]);
+    disp('Por favor, execute setupPins.m antes de prosseguir.');
+    return;
+end
+
+% 1.2. Carregar Parâmetros de Calibração do Potenciômetro
+try
+    load('potentiometerCalibration.mat', 'minVoltage', 'maxVoltage', 'angleRangeDegrees', 'voltsPerDegree');
+    if ~exist('minVoltage', 'var') || ~exist('voltsPerDegree', 'var') || ~exist('angleRangeDegrees', 'var')
+        error('Parâmetros de calibração não carregados. Execute calibratePotentiometer.m primeiro.');
+    end
+    % AJUSTE: Considere que o potenciômetro gira 3600 graus.
+    % Se 'angleRangeDegrees' veio de uma calibração para 360, você precisará
+    % ajustar 'voltsPerDegree' ou recalibrar. Para este exemplo, assumimos que
+    % 'angleRangeDegrees' carregado JÁ REPRESENTA O RANGE REAL DE 3600.
+    % Se sua calibração foi para 360 e você quer "escalar" para 3600,
+    % a lógica seria: voltsPerDegree_3600 = voltsPerDegree_360 * (360/3600) ou ajustar a calibração.
+    % Para este script, vamos assumir que angleRangeDegrees *carregado* é o seu 3600.
+
+    fprintf('Tensão Mínima (0 graus): %.4fV\n', minVoltage);
+    fprintf('Volts por Grau: %.4fV/deg\n', voltsPerDegree);
+    fprintf('Amplitude Angular Calibrada: %.2f graus\n', angleRangeDegrees); % Deveria ser 3600
+catch ME1
+    disp(['ERRO ao carregar parâmetros de calibração: ', ME1.message]);
+    disp('Por favor, execute calibratePotentiometer.m antes de prosseguir.');
+    return;
+end
+
+% --- Proteção de Fins de Curso (5% de 0 a 3600 graus) ---
+% Calcule os ângulos que representam 5% do range calibrado
+angleLimitLower = angleRangeDegrees * 0.05; % 5% do limite inferior (do total de 3600)
+angleLimitUpper = angleRangeDegrees * 0.95; % 95% do limite superior (do total de 3600)
+
+fprintf('Limite de Operação Seguro: %.2f graus a %.2f graus (5%% dos extremos)\n', angleLimitLower, angleLimitUpper);
+
+% --- 2. CONEXÃO COM ARDUINO/ESP32 ---
+a = []; % Inicializa o objeto Arduino como vazio
+try
+    % Substitua 'COM9' pela porta serial da sua ESP32, se for diferente.
+    a = arduino("COM9", "ESP32-WROOM-DevKitV1");
+    disp('Conexão com ESP32 estabelecida!');
+    configurePin(a, motorPin1, "PWM");
+    configurePin(a, motorPin2, "PWM");
+    disp('Pinos do motor configurados como PWM.');
+catch ME
+    disp(['ERRO ao conectar à ESP32 ou configurar pinos: ', ME.message]);
+    disp('Verifique se a placa está conectada e a porta COM correta.');
+    return; % Sai do script se a conexão falhar
+end
+
+% --- 3. PARÂMETROS DO CONTROLADOR P ---
+Kp = 0.001;      % GANHO PROPORCIONAL: Ajuste este valor.
+
+pwmMax = 0.8;    % Duty Cycle Máximo (100% PWM)
+pwmMinAtivacao = 0.1; % Opcional: PWM mínimo para superar atrito.
+
+erroZonaMorta = 5; % [graus] Margem de erro em que o motor é desligado para evitar vibrações
+
+
+% --- 4. PEDIR A POSIÇÃO DESEJADA AO USUÁRIO ---
+disp(' ');
+disp('--- AJUSTE DE POSIÇÃO ---');
+posicaoDesejada = input(sprintf('Digite o ângulo desejado (entre %.2f e %.2f graus): ', 0, angleRangeDegrees));
+
+% Validação da entrada e ajuste para dentro dos limites de operação seguros
+if posicaoDesejada < angleLimitLower
+    warning('Ângulo desejado menor que o limite seguro (%.2f graus). Ajustando para %.2f graus.', angleLimitLower, angleLimitLower);
+    posicaoDesejada = angleLimitLower;
+elseif posicaoDesejada > angleLimitUpper
+    warning('Ângulo desejado maior que o limite seguro (%.2f graus). Ajustando para %.2f graus.', angleLimitUpper, angleLimitUpper);
+    posicaoDesejada = angleLimitUpper;
+end
+fprintf('Ângulo alvo definido para: %.2f graus\n', posicaoDesejada);
+
+% --- 5. LOOP DE CONTROLE PRINCIPAL ---
+disp(' ');
+disp('--- INICIANDO CONTROLE ---');
+disp('Pressione Ctrl+C no console do MATLAB para PARAR o controle a qualquer momento.');
+
+tempoInicioControle = tic; % Inicia o cronômetro para o tempo de execução do controle
+duracaoMaxControle = 120; % [segundos] Tempo máximo para o loop de controle (aumentado para 120s)
+samplePeriod = 0.05; % [segundos] Período de amostragem do loop de controle
+
+try
+    while toc(tempoInicioControle) < duracaoMaxControle
+        % A. Ler a posição atual do potenciômetro
+        currentVoltage = readVoltage(a, potPin);
+        posicaoAtual = (currentVoltage - minVoltage) / voltsPerDegree;
+
+        % B. Verificar limites de fim de curso antes de calcular o erro
+        % SE o motor atingir um dos limites de 5% dos fins de curso, DESLIGAR IMEDIATAMENTE.
+        if (posicaoAtual < angleLimitLower && posicaoDesejada < posicaoAtual) || ... % Se está abaixo do limite INFERIOR e o alvo está na mesma direção (tentando ir mais baixo)
+           (posicaoAtual > angleLimitUpper && posicaoDesejada > posicaoAtual)        % Se está acima do limite SUPERIOR e o alvo está na mesma direção (tentando ir mais alto)
+            disp('!!! FIM DE CURSO ATINGIDO OU EXCEDIDO! PARANDO MOTOR IMEDIATAMENTE !!!');
+            writePWMDutyCycle(a, motorPin1, 0);
+            writePWMDutyCycle(a, motorPin2, 0);
+            break; % Sai do loop de controle
+        end
+        
+        % C. Calcular o Erro
+        erro = posicaoDesejada - posicaoAtual;
+
+        % D. Calcular a Saída do Controlador Proporcional (PWM)
+        pwmOutput = Kp * erro;
+
+        % E. Aplicar Zona Morta no Erro (para evitar vibrações quando próximo do alvo)
+        if abs(erro) < erroZonaMorta
+            pwmToApply = 0; % Desliga o motor se o erro for menor que a zona morta
+        else
+            % F. Limitar o PWM calculado entre 0 e pwmMax
+            % Se pwmOutput for negativo (erro negativo), use abs() e aplique o limite.
+            % Se pwmOutput for positivo (erro positivo), aplique o limite diretamente.
+            pwmToApply = min(abs(pwmOutput), pwmMax);
+            if pwmToApply > 0 && pwmToApply < pwmMinAtivacao
+                pwmToApply = pwmMinAtivacao;
+            end
+        end
+
+        % G. Controlar a Direção do Motor com os Pinos PWM
+        if erro > erroZonaMorta % Erro positivo significa que a posição atual é menor que a desejada
+                               % (Girar em um sentido, ex: Horário, usando motorPin1)
+            writePWMDutyCycle(a, motorPin1, pwmToApply);
+            writePWMDutyCycle(a, motorPin2, 0);
+        elseif erro < -erroZonaMorta % Erro negativo significa que a posição atual é maior que a desejada
+                                     % (Girar no sentido oposto, ex: Anti-horário, usando motorPin2)
+            writePWMDutyCycle(a, motorPin1, 0);
+            writePWMDutyCycle(a, motorPin2, pwmToApply);
+        else % Erro dentro da zona morta ou exatamente zero
+            writePWMDutyCycle(a, motorPin1, 0);
+            writePWMDutyCycle(a, motorPin2, 0);
+        end
+
+        % H. Exibir status no console (para depuração)
+        fprintf('Set: %.2f | Atual: %.2f | Erro: %.2f | PWM Calc: %.2f | PWM Aplicado: %.2f\n', ...
+                posicaoDesejada, posicaoAtual, erro, pwmOutput, pwmToApply);
+
+        % I. Pequeno atraso para manter o período de amostragem
+        pause(samplePeriod);
+    end
+    disp('Duração máxima do controle atingida. Parando motor.');
+
+catch ME % Bloco 'catch' para capturar erros ou interrupções (Ctrl+C, etc.)
+    if strcmp(ME.identifier, 'MATLAB:KeyboardInterrupt')
+        disp('Comando Ctrl+C detectado. Tentando desligar o motor e liberar o objeto Arduino imediatamente...');
+    else
+        disp(['!!! ERRO INESPERADO DURANTE A OPERAÇÃO: ', ME.message, ' !!!']);
+    end
+    % Este bloco tentará desligar o motor e fechar a conexão, mesmo com erro
+    % Será complementado pelo 'finally' para garantir a limpeza final
+finally
+    % Este bloco SEMPRE será executado no final, garantindo o desligamento e a limpeza
+    if isvalid(a) % Verifica se o objeto 'a' (Arduino) ainda é válido e ativo
+        disp(' ');
+        disp('--- EXECUTANDO ROTINA DE LIMPEZA FINAL: Parando o motor e fechando conexão ---');
+        writePWMDutyCycle(a, motorPin1, 0); % Garante que os motores estejam desligados
+        writePWMDutyCycle(a, motorPin2, 0);
+        delete(a); % Deleta o objeto Arduino, fechando a conexão serial
+        disp('Conexão com ESP32 fechada.');
+    elseif exist('a', 'var') && ~isvalid(a)
+        % Mensagem se o objeto já foi invalidado (ex: já deletado no catch)
+        disp('Objeto Arduino já foi invalidado. Nenhuma ação de limpeza adicional necessária.');
+    end
+end
+
+disp(' ');
+disp('--- FIM DO SCRIPT DE CONTROLE ---');
