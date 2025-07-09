@@ -1,162 +1,102 @@
-# Controle de Posição de Motor DC com ESP32 e MATLAB
+# Controle de Posição de Motor DC com ESP32 e MATLAB (Versão Atualizada)
 
-Este repositório contém os scripts MATLAB e a documentação para o desenvolvimento de um sistema de controle de posição de motor DC utilizando uma placa ESP32 como hardware e o MATLAB para lógica de controle, aquisição de dados e ajuste PID.
+Este repositório contém os scripts MATLAB e a documentação para o desenvolvimento de um sistema de controle de posição de motor DC utilizando uma placa ESP32 como hardware e o MATLAB para lógica de controle, aquisição de dados e ajuste PID. Esta documentação reflete as versões mais recentes dos scripts fornecidos.
 
 ## Visão Geral do Projeto
 
 O objetivo principal deste projeto é implementar um controlador de posição de malha fechada para um motor DC, utilizando um potenciômetro para feedback de posição e a ESP32 para interface com o hardware. O processo envolve as seguintes etapas:
 
-1.  **Configuração Inicial:** Definição e configuração dos pinos da ESP32.
-2.  **Calibração do Sensor:** Mapeamento da leitura do potenciômetro (tensão ADC) para valores angulares (graus).
-3.  **Identificação do Sistema:** Coleta de dados de resposta ao degrau de PWM para modelar a dinâmica do motor.
-4.  **Controle P Básico (Baseline):** Implementação de um controlador proporcional simples para estabelecer uma linha de base de desempenho.
-5.  **Ajuste PID:** Utilização do System Identification Toolbox e PID Tuner do MATLAB para otimizar os ganhos PID.
-6.  **Controle PID Completo:** Implementação final do controlador PID com os ganhos ajustados e anti-windup.
+1.  **Configuração Inicial:** Definição e configuração dos pinos da ESP32.
+2.  **Calibração do Sensor:** Mapeamento da leitura do potenciômetro (tensão ADC) para valores angulares (graus).
+3.  **Coleta de Resposta ao Degrau PWM:** Aquisição de dados para identificação do sistema do motor.
+4.  **Controle P Básico (Baseline):** Implementação de um controlador proporcional simples para estabelecer uma linha de base de desempenho.
+5.  **Controle PID Completo:** Implementação final do controlador PID com ganhos ajustados e funcionalidade de anti-windup.
+6.  **Rotação do Motor até Limites:** Script para movimentação controlada do motor até seus limites físicos ou interrupção manual.
 
 ## Pré-requisitos
 
 Antes de começar, certifique-se de ter os seguintes softwares e hardwares instalados e configurados:
 
 * **MATLAB:** Versão 2020b ou superior (recomendado).
-* **Pacotes de Suporte do MATLAB para Hardware:**
-    * `MATLAB Support Package for Arduino Hardware` (incluindo suporte para ESP32).
-* **Firmware `server_esp32.ino` na ESP32:** Certifique-se de que sua ESP32 esteja programada com o firmware `server_esp32.ino` (ou equivalente) que permite a comunicação serial com o MATLAB.
+* **Pacotes de Suporte do MATLAB para Hardware:** `MATLAB Support Package for Arduino Hardware` e `MATLAB Support Package for ESP32 Hardware`.
+* **Drivers da ESP32:** Certifique-se de que os drivers da sua placa ESP32 (e.g., CP210x USB to UART Bridge VCP Drivers) estão instalados e a placa é reconhecida em uma porta COM (Windows) ou `/dev/ttyUSBx`, `/dev/cu.usbserial-xxxx` (Linux/macOS).
 * **Hardware:**
-    * Placa ESP32-WROOM-DevKitV1 (ou similar).
-    * Motor DC.
-    * Potenciômetro de múltiplas voltas (ou similar para feedback de posição).
-    * Driver de motor (e.g., L298N, ponte H).
-    * Fonte de alimentação adequada para o motor.
-    * Fios de conexão.
+    * Placa ESP32 (e.g., ESP32-WROOM-DevKitV1)
+    * Motor DC
+    * Driver de Motor DC (e.g., L298N)
+    * Potenciômetro de 10 voltas ou similar para feedback de posição
+    * Fonte de alimentação adequada
 
-## Estrutura do Repositório
+## Scripts MATLAB
 
-* `setupPins.m`: Script para definir os pinos do hardware e testar a conexão inicial.
-* `calibratePotentiometer.m`: Script para calibrar o potenciômetro e mapear a tensão para graus.
-* `collectPWMStepResponse.m`: Script para coletar dados de resposta ao degrau de PWM, usados para identificação do sistema.
-* `basicPControl.m`: Script para implementar um controlador Proporcional (P) básico, com limites de PWM.
-* `fullPIDControl.m`: Script para implementar o controlador PID completo, com os ganhos otimizados e anti-windup robusto.
-* `arduinoPins.mat`: Arquivo gerado por `setupPins.m` contendo as definições dos pinos.
-* `potentiometerCalibration.mat`: Arquivo gerado por `calibratePotentiometer.m` contendo os parâmetros de calibração do potenciômetro.
-* `stepResponseData.mat`: Arquivo gerado por `collectPWMStepResponse.m` contendo os dados para identificação do sistema.
-* `basicPControlResponse.mat`: Arquivo gerado por `basicPControl.m` contendo a resposta do controle P para comparação.
-* `fullPIDControlResponse.mat`: Arquivo gerado por `fullPIDControl.m` contendo a resposta do controle PID ajustado.
+A seguir, uma descrição detalhada de cada script:
 
-## Guia de Uso
+### `1. setupPins.m`
 
-Siga a ordem dos scripts para desenvolver e testar seu sistema de controle.
+* **Propósito:** Este script é responsável por estabelecer a conexão inicial com a placa ESP32 e configurar os pinos digitais designados para o potenciômetro e os controles do motor (PWM). Ele define as variáveis `potPin`, `motorPin1`, e `motorPin2` e as salva no arquivo `arduinoPins.mat` para uso por outros scripts.
+* **Ação:** Cria e configura o objeto `arduino` temporariamente, configurando os pinos do motor como `PWM`.
+* **Saída Salva:** `arduinoPins.mat` (contém `potPin`, `motorPin1`, `motorPin2`).
 
-### 1. Configuração dos Pinos (`setupPins.m`)
+### `2. calibratePotentiometer.m`
 
-Este script define quais pinos da ESP32 serão usados para o potenciômetro e o motor, e verifica a conexão inicial.
+* **Propósito:** Realiza a calibração do potenciômetro usado para feedback de posição, mapeando as leituras de tensão do ADC para valores angulares em graus.
+* **Pré-requisitos:** Executar `setupPins.m` primeiro para carregar as definições de pino.
+* **Ação:** Guia o usuário a girar o potenciômetro/motor para as posições mínima (0 graus) e máxima (e.g., 3600 graus para 10 voltas), registrando as tensões correspondentes e calculando a relação `Volts por Grau`.
+* **Saída Salva:** `potentiometerCalibration.mat` (contém `minVoltage`, `maxVoltage`, `angleRangeDegrees`, `voltsPerDegree`).
 
-```matlab
-% Executar este script primeiro
-setupPins.m
+### `3. collectPWMStepResponse.m`
 
-Observações:
+* **Propósito:** Coleta dados de resposta do motor a uma sequência de três degraus complexos de PWM. Os dados coletados são essenciais para a identificação do sistema no MATLAB System Identification Toolbox.
+* **Pré-requisitos:** `setupPins.m` e `calibratePotentiometer.m` devem ser executados previamente.
+* **Ação:** Move o motor para uma posição inicial segura (aproximadamente o centro do range) e então aplica uma sequência de degraus de PWM, registrando o tempo, a posição atual e o duty cycle aplicado.
+* **Saída Salva:** `multiStepResponseData.mat` (contém `timeData`, `positionData`, `inputDutyCycle`).
 
-    Ajuste a porta COM ("COM9") e o modelo da sua ESP32 ("ESP32-WROOM-DevKitV1") no script, se necessário.
+### `4. simplePController.m`
 
-    As variáveis de pino (potPin, motorPin1, motorPin2) são salvas em arduinoPins.mat para serem carregadas pelos scripts seguintes.
+* **Propósito:** Implementa um controlador de posição Proporcional (P) simples para o motor DC, servindo como linha de base para o controle de posição.
+* **Pré-requisitos:** `setupPins.m` e `calibratePotentiometer.m` devem ser executados antes.
+* **Ação:** Solicita uma posição angular desejada ao usuário e tenta alcançá-la usando apenas um ganho proporcional (`Kp`). Inclui proteção de fins de curso (5% dos extremos calibrados) para operação segura.
+* **Parâmetros Configuráveis:** `Kp`, `pwmMax`, `pwmMinAtivacao`, `erroZonaMorta`.
+* **Características:** Proteção de fins de curso e detecção de "alvo atingido" dentro de uma zona morta.
+    * **Fórmula do Erro:** `erro = Posição Desejada - Posição Atual`
+        * **Justificativa:** O erro é a diferença entre o que se deseja alcançar (setpoint) e o que se tem atualmente (medida do sensor). Um erro positivo indica que a posição atual está aquém da desejada, e um erro negativo indica que a posição atual ultrapassou a desejada.
+    * **Fórmula do PWM Proporcional:** `pwmOutput = Kp * erro`
+        * **Justificativa:** A saída do controlador proporcional é diretamente proporcional ao erro. Quanto maior o erro, maior o PWM aplicado (até o limite de `pwmMax`), o que faz com que o motor se mova mais rapidamente em direção ao setpoint.
+    * **Fórmula de Saturação do PWM:** `pwmToApply = min(abs(pwmOutput), pwmMax)`
+        * **Justificativa:** Garante que o sinal de controle (PWM) não exceda os limites físicos do motor (0 a 100% duty cycle ou 0 a `pwmMax`). A função `abs()` é usada porque o sentido de rotação é definido separadamente.
 
-2. Calibração do Potenciômetro (calibratePotentiometer.m)
+### `5. ControllerPID.m`
 
-Este script calibra o potenciômetro, definindo as tensões mínima e máxima que correspondem aos 0 graus e ao ângulo máximo de rotação (e.g., 3600 graus para 10 voltas).
-Matlab
+* **Propósito:** Este script implementa um controlador de posição PID completo para o motor DC. É a versão aprimorada do controlador de posição.
+* **Pré-requisitos:** `setupPins.m` e `calibratePotentiometer.m` devem ser executados.
+* **Ação:** Pede a posição angular desejada ao usuário e utiliza os termos Proporcional (`Kp`), Integral (`Ki`) e Derivativo (`Kd`) para calcular o sinal de controle (PWM).
+* **Parâmetros Configuráveis:** `Kp`, `Ki`, `Kd`, `pwmMax`, `pwmMinAtivacao`, `erroZonaMorta`. Os valores de `Kp`, `Ki`, `Kd` devem ser ajustados (preferencialmente via PID Tuner do MATLAB) para otimização.
+* **Características Implementadas:**
+    * **Controle PID:** Cálculo dos termos Proporcional, Integral e Derivativo.
+    * **Anti-Windup:** Implementação de uma lógica de anti-windup para o termo integral (limitando seu acúmulo quando o PWM está saturado).
+    * **Limitação de PWM:** Assegura que o motor opere dentro dos limites de segurança e operacionais.
+    * **Proteção de Fins de Curso:** Para garantir a operação segura dentro dos limites do motor.
+    * **Fórmula do Erro:** `erro = posicaoDesejada - posicaoAtual`
+        * **Justificativa:** Similar ao controlador P, o erro é a diferença entre o setpoint e a medição atual da posição.
+    * **Cálculo dos Termos PID:**
+        * **Termo Proporcional (P):** `termoP = Kp * erro`
+            * **Justificativa:** Responde instantaneamente ao erro atual. Um `Kp` maior resulta em uma resposta mais rápida, mas pode causar instabilidade.
+        * **Termo Integral (I):** `integralErro = integralErro + erro * samplePeriod` (atualizado condicionalmente) e `termoI = Ki * integralErro`
+            * **Justificativa:** Acumula o erro ao longo do tempo para eliminar o erro em regime permanente (steady-state error). `Ki` determina a taxa de acumulação do erro integral.
+        * **Termo Derivativo (D):** `derivadaErro = (erro - erroAnterior) / samplePeriod` e `termoD = Kd * derivadaErro`
+            * **Justificativa:** Responde à taxa de variação do erro, ajudando a amortecer oscilações e melhorar a resposta a distúrbios. `Kd` influencia a intensidade dessa ação de amortecimento.
+    * **Saída Bruta do PID:** `rawPidOutput = termoP + Ki * integralErro + termoD`
+        * **Justificativa:** Representa o sinal de controle que o controlador PID deseja aplicar antes de qualquer saturação.
+    * **Anti-Windup por Clamping:** O termo integral (`integralErro`) é atualizado **apenas** se a saída bruta do PID (`rawPidOutput`) não estiver saturada (dentro de `+-pwmMax`), ou se a saturação e o erro ainda "concordam" na direção (ajudando o sistema a sair da saturação).
+        * `if (rawPidOutput < pwmMax && rawPidOutput > -pwmMax) || (rawPidOutput >= pwmMax && erro > 0) || (rawPidOutput <= -pwmMax && erro < 0)`
+        * `integralErro = integralErro + erro * samplePeriod;`
+        * **Justificativa:** O anti-windup impede que o termo integral acumule um erro excessivo quando o atuador (motor) atinge seus limites de saturação (ex: PWM máximo/mínimo). Sem isso, o termo integral continuaria crescendo desnecessariamente, causando um overshoot maior e um tempo de acomodação prolongado quando o sistema tentasse retornar ao setpoint.
+    * **Fórmula de Saturação do PWM:** `pwmToApply = min(abs(pidOutput), pwmMax)`
+        * **Justificativa:** Garante que o sinal de controle final aplicado ao motor esteja dentro dos limites operacionais seguros, prevenindo a sobrecarga do hardware.
 
-% Executar após setupPins.m
-calibratePotentiometer.m
+### `6. rotateMotorToLimit.m`
 
-Instruções durante a execução:
-
-    O script irá guiá-lo para posicionar o motor/potenciômetro na posição mínima (0 graus) e máxima (e.g., 3600 graus) para registrar as tensões correspondentes.
-
-    Os parâmetros de calibração são salvos em potentiometerCalibration.mat.
-
-3. Coleta de Resposta ao Degrau (collectPWMStepResponse.m)
-
-Este script aplica um degrau de PWM ao motor e coleta os dados de posição ao longo do tempo. Esses dados são cruciais para a identificação do modelo do seu sistema.
-Matlab
-
-% Executar após calibratePotentiometer.m
-collectPWMStepResponse.m
-
-Observações:
-
-    O sampleRate está definido para 0.02 segundos (50 Hz), o que proporciona uma boa resolução para a identificação do sistema.
-
-    Os dados de tempo, posição e duty cycle de entrada são salvos em stepResponseData.mat.
-
-4. Identificação do Sistema e Ajuste PID
-
-Após coletar os dados de resposta ao degrau, você usará o MATLAB para identificar um modelo do seu sistema e ajustar os ganhos PID.
-
-A. Identificação do Modelo (System Identification Toolbox)
-
-    Abra o System Identification Toolbox no MATLAB digitando ident na linha de comando.
-
-    Importe os dados de stepResponseData.mat. Selecione timeData como tempo, positionData como saída e inputDutyCycle como entrada.
-
-    Utilize as ferramentas do Toolbox para identificar um modelo que represente a dinâmica do seu motor (e.g., um modelo de função de transferência de 1ª ou 2ª ordem).
-
-B. Ajuste dos Ganhos PID (PID Tuner)
-
-    Uma vez que você tenha um modelo identificado (ex: G = tf(...)), abra o PID Tuner:
-    Matlab
-
-    pidTuner(G)
-
-    No PID Tuner, você pode ajustar interativamente os ganhos Kp, Ki e Kd para alcançar o desempenho desejado (velocidade, overshoot, erro em regime permanente).
-
-    Anote os valores finais de Kp, Ki e Kd que você determinar como ideais. Eles serão usados no próximo script.
-
-5. Controle P Básico (basicPControl.m)
-
-Este script implementa um controlador Proporcional simples. Ele serve como uma linha de base para comparação com o desempenho do controle PID otimizado.
-Matlab
-
-% Executar após calibrar e antes de testar o PID completo
-basicPControl.m
-
-Observações:
-
-    Ele inclui as limitações de PWM (min 15%, max 60%).
-
-    Você precisará ajustar o Kp inicial para obter uma resposta razoável.
-
-    Os dados de desempenho são salvos em basicPControlResponse.mat.
-
-6. Controle PID Completo (fullPIDControl.m)
-
-Este é o script final que implementa o controlador PID completo, incluindo a lógica de anti-windup.
-Matlab
-
-% Executar após obter os ganhos PID do PID Tuner
-fullPIDControl.m
-
-Passo Crítico:
-
-    Antes de executar: Edite o script fullPIDControl.m e substitua os valores de exemplo de Kp, Ki e Kd pelos valores otimizados que você obteve do "PID Tuner".
-
-Matlab
-
-% --- PARÂMETROS DO CONTROLADOR PID ---
-% ESTES VALORES SERÃO POPULADOS COM OS RESULTADOS DO PID TUNER
-Kp = SEU_VALOR_DE_KP;   % Ganho Proporcional
-Ki = SEU_VALOR_DE_KI;   % Ganho Integral
-Kd = SEU_VALOR_DE_KD;  % Ganho Derivativo
-
-Características Implementadas:
-
-    Controle PID: Cálculo dos termos Proporcional, Integral e Derivativo.
-
-    Anti-Windup Robusto: A lógica do termo integral foi aprimorada para evitar o acúmulo excessivo quando o atuador está saturado. Isso ajuda a reduzir o overshoot e melhorar o tempo de assentamento.
-
-    Limitação de PWM: Assegura que o motor opere dentro dos limites de segurança e operacionais (15% a 60% de duty cycle).
-
-Os dados de desempenho do controlador PID completo serão salvos em fullPIDControlResponse.mat.
-
-Análise e Comparação
-
-Após executar basicPControl.m e fullPIDControl.m, você terá os arquivos .mat com os dados de resposta. Você pode carregá-los no MATLAB e plotar as curvas de posição e PWM para comparar visualmente o desempenho do controle P básico com o controle PID otimizado. Isso demonstrará as melhorias alcançadas com o ajuste PID.
+* **Propósito:** Permite girar o motor continuamente em uma direção específica (horário ou anti-horário) até que ele atinja um dos limites de rotação predefinidos (5% dos extremos calibrados) ou seja interrompido manualmente pelo usuário.
+* **Pré-requisitos:** `setupPins.m` e `calibratePotentiometer.m` devem ser executados previamente.
+* **Ação:** Solicita a direção e a potência (PWM) desejada, verifica a posição inicial do motor e, em seguida, aplica o PWM para girar o motor até um dos limites, exibindo a tensão e o ângulo em tempo real.
+* **Características:** Detecção de limites de rotação, opção de escolha da direção e interrupção manual (Ctrl+C).
