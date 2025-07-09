@@ -21,7 +21,6 @@ end
 a = []; % Inicializa 'a' como vazio
 try
     % Substitua 'COMx' pela porta serial da sua ESP32
-    % Certifique-se que o nome do módulo ESP32 está correto!
     a = arduino("COM9", "ESP32-WROOM-DevKitV1"); 
     disp('Conexão com ESP32 estabelecida para este script!');
     if isvalid(a)
@@ -65,14 +64,6 @@ try
     disp('Parâmetros de calibração salvos em potentiometerCalibration.mat!');
 catch ME
     disp(['ERRO ao salvar parâmetros de calibração: ', ME.message]);
-end
-
-% 7. Testar a conversão (opcional)
-disp(' ');
-testVoltage = input('Digite uma tensão para testar a conversão em graus (ex: 1.5): ');
-if ~isempty(testVoltage) && isnumeric(testVoltage)
-    testDegrees = (testVoltage - minVoltage) / voltsPerDegree;
-    fprintf('%.4fV corresponde a %.2f graus.\n', testVoltage, testDegrees);
 end
 
 % 8. Fechar conexão Arduino

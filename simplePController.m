@@ -126,7 +126,7 @@ try
         pwmToApply = 0; 
 
         % G. Controlar a Direção do Motor com os Pinos PWM
-        % Nova lógica: Se o erro estiver dentro da zona morta, considera o target atingido e para o script.
+        % Se o erro estiver dentro da zona morta, considera o target atingido e para o script.
         if abs(erro) < erroZonaMorta 
             disp(' ');
             disp('!!! TARGET ATINGIDO DENTRO DA ZONA MORTA! PARANDO O SCRIPT !!!');

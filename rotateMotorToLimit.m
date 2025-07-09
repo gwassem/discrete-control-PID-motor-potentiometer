@@ -45,7 +45,6 @@ fprintf('Limite Superior para Parada: %.2f graus\n', upperLimitAngle);
 % 3. Recriar o Objeto Arduino
 a = [];
 try
-    % Substitua 'COM9' pela porta serial da sua ESP32, se for diferente.
     a = arduino("COM9", "ESP32-WROOM-DevKitV1");
     disp('Conexão com ESP32 estabelecida para este script!');
     configurePin(a, motorPin1, "PWM");
@@ -57,7 +56,7 @@ catch ME
     return;
 end
 
-% --- MODIFICAÇÃO: Verificação Inicial da Posição do Motor (apenas alerta) ---
+% Verificação Inicial da Posição do Motor (apenas alerta) ---
 disp(' ');
 disp('--- VERIFICANDO POSIÇÃO ATUAL DO MOTOR ---');
 try
@@ -79,7 +78,6 @@ catch ME
     disp('Não foi possível verificar a posição inicial do motor. Prossiga com cautela.');
     % Não termina o script, apenas avisa sobre a falha na leitura inicial.
 end
-% --- FIM DA MODIFICAÇÃO ---
 
 % 4. Parâmetros de Rotação e Seleção de Direção
 dutyCycle = 0.5; % Duty cycle para rotação (50%). Ajuste conforme a necessidade.
@@ -96,9 +94,6 @@ otherMotorPin = '';
 
 % Ajuste a lógica aqui para mapear 1 (horário) e 2 (anti-horário)
 % para os seus pinos físicos.
-% EXEMPLO: ASSUMINDO que motorPin1 -> Sentido Horário e motorPin2 -> Sentido Anti-Horário
-% SE ESSA ASSUNÇÃO ESTIVER ERRADA PARA O SEU HARDWARE, VOCÊ DEVE INVERTER
-% 'motorPin1' e 'motorPin2' DENTRO DOS BLOCOS 'if' E 'elseif' ABAIXO.
 if directionChoice == 1 % Usuário escolhe sentido horário
     selectedMotorPin = motorPin1; % Define o pino que corresponde ao sentido horário
     otherMotorPin = motorPin2;

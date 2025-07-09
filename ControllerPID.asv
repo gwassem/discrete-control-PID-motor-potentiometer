@@ -50,6 +50,7 @@ a = []; % Inicializa o objeto Arduino como vazio
 try
     % Substitua 'COM9' pela porta serial da sua ESP32, se for diferente.
     % Use 'ESP32-WROOM-32' ou 'ESP32-WROOM-DevKitV1' dependendo do seu modelo.
+    % Para Windows, a porta COM geralmente é algo como 'COMx'. No Linux/macOS, '/dev/ttyUSBx' ou '/dev/cu.usbserial-xxxx'.
     a = arduino("COM9", "ESP32-WROOM-DevKitV1");
     disp('Conexão com ESP32 estabelecida!');
     configurePin(a, motorPin1, "PWM");

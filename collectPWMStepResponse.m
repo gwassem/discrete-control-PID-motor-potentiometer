@@ -107,23 +107,12 @@ try
     dataIndex = 1;
     % --- Definição dos Degraus de PWM ---
     % Cada linha é [dutyCycle_motorPin1, dutyCycle_motorPin2, dutyCycle_simulado_para_plot]
-    % O dutyCycle_simulado_para_plot usa valores negativos para indicar sentido.
-    % Ex: dutyCycle de 0.5 em motorPin1 = 0.5 (positivo)
-    % Ex: dutyCycle de 0.5 em motorPin2 = -0.5 (negativo para plot)
     pwmSteps = [
         0.4, 0, -0.4;  % Degrau 1: 40% PWM no motorPin2 (anti-horário, vindo do superior)
         0, 0.6, 0.6;   % Degrau 2: 60% PWM no motorPin1 (horário)
         0.3, 0, -0.3;  % Degrau 3: 30% PWM no motorPin2 (anti-horário, com PWM diferente)
         0, 0, 0        % NOVO DEGRAU: Desliga o motor ao final da sequência
     ];
-
-    % ATENÇÃO: Se adicionarmos um degrau de parada, precisamos ajustar o tamanho dos arrays
-    % para coletar dados, ou ajustar a lógica para não coletar dados no degrau de parada.
-    % Para simplificar, vou ajustar o tamanho do array de coleta de dados para acomodar
-    % um degrau extra, mesmo que ele seja de "parada" (poderíamos coletar dados de posição=0).
-    % ALTERAÇÃO: O número de samples por step deve ser *multiplicado* pelo número de degraus
-    % originais, e o último degrau (de parada) pode ser de uma duração menor ou não coletar dados.
-    % Para esta solução, vamos assumir que queremos coletar dados (posição=0) para o degrau de parada.
 
     % Recalcule o tamanho dos arrays de dados para incluir o degrau de parada
     numTotalSteps = size(pwmSteps, 1);
@@ -213,7 +202,7 @@ xlabel('Tempo (s)');
 ylabel('Posição (Graus)');
 grid on;
 % 7. Salvar os Dados para o System Identification Toolbox
-% Salva as variáveis cruciais em um arquivo .mat para serem carregadas no Toolbox.
+% Salva as variáveis em um arquivo .mat para serem carregadas no Toolbox.
 try
     save('multiStepResponseData.mat', 'timeData', 'positionData', 'inputDutyCycle');
     disp('Dados de resposta a múltiplos degraus salvos em multiStepResponseData.mat!');
