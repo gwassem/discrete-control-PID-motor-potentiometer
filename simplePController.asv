@@ -1,8 +1,8 @@
-% simplePositionControllerPID.m
-% Script para controle de posição do motor usando um controlador PID.
+% simplePositionController.m
+% Script para controle de posição do motor usando um controlador Proporcional (P).
 % Pede a posição angular desejada ao usuário e tenta alcançá-la.
 clc; clear all; close all; % Limpa o console, workspace e fecha figuras
-disp('--- INICIANDO CONTROLADOR PID DE POSIÇÃO ---');
+disp('--- INICIANDO CONTROLADOR DE POSIÇÃO PROPORCIONAL SIMPLES ---');
 
 % --- 1. CARREGAMENTO DE CONFIGURAÇÃO E CALIBRAÇÃO ---
 % Este script AGORA CARREGA OS VALORES de arquivos .mat.
@@ -50,6 +50,7 @@ a = []; % Inicializa o objeto Arduino como vazio
 try
     % Substitua 'COM9' pela porta serial da sua ESP32, se for diferente.
     % Use 'ESP32-WROOM-32' ou 'ESP32-WROOM-DevKitV1' dependendo do seu modelo.
+    % Para Windows, a porta COM geralmente é algo como 'COMx'. No Linux/macOS, '/dev/ttyUSBx' ou '/dev/cu.usbserial-xxxx'.
     a = arduino("COM9", "ESP32-WROOM-DevKitV1");
     disp('Conexão com ESP32 estabelecida!');
     configurePin(a, motorPin1, "PWM");
@@ -61,16 +62,10 @@ catch ME
     return; % Sai do script se a conexão falhar
 end
 
-% --- 3. PARÂMETROS DO CONTROLADOR PID ---
-% Ajuste experimental: Comece com Kp, Ki do PID Tuner (sinal invertido)
-% Se houver overshoot ou oscilação excessiva, comece reduzindo Ki.
-% Se a resposta for lenta, aumente Kp (e talvez um pouco Ki).
-Kp = 0.0027;      % GANHO PROPORCIONAL
-Ki = 0.00004393;     % GANHO INTEGRAL (Tente reduzir este se houver muito overshoot ou windup)
-Kd = 0;             % GANHO DERIVATIVO
-
+% --- 3. PARÂMETROS DO CONTROLADOR P ---
+Kp = 0.002;      % GANHO PROPORCIONAL: Ajuste este valor.
 pwmMax = 0.8;    % Duty Cycle Máximo (100% PWM)
-pwmMinAtivacao = 0.15; % PWM mínimo para superar atrito.
+pwmMinAtivacao = 0.1; % Opcional: PWM mínimo para superar atrito.
 erroZonaMorta = 5; % [graus] Margem de erro em que o motor é considerado "no alvo".
 
 % --- 4. PEDIR A POSIÇÃO DESEJADA AO USUÁRIO ---
@@ -88,16 +83,12 @@ elseif posicaoDesejada > angleLimitUpper
 end
 fprintf('Ângulo alvo definido para: %.2f graus\n', posicaoDesejada);
 
-% --- 5. INICIALIZAÇÃO PARA REGISTRO DE DADOS E PID ---
+% --- 5. INICIALIZAÇÃO PARA REGISTRO DE DADOS ---
 % Vetores para armazenar dados para o gráfico
 tempoRegistro = [];
 posicaoAtualRegistro = [];
 posicaoDesejadaRegistro = []; % Para plotar o setpoint
 pwmAplicadoRegistro = []; % Armazena o PWM aplicado em cada instante
-
-% Variáveis para o cálculo PID
-integralErro = 0;
-erroAnterior = 0;
 
 % --- 6. LOOP DE CONTROLE PRINCIPAL ---
 disp(' ');
@@ -117,9 +108,9 @@ try
         % SE o motor atingir um dos limites de 5% dos fins de curso, DESLIGAR IMEDIATAMENTE.
         if (posicaoAtual < angleLimitLower && posicaoDesejada < posicaoAtual) || ... % Se está abaixo do limite INFERIOR e o alvo está na mesma direção (tentando ir mais baixo)
            (posicaoAtual > angleLimitUpper && posicaoDesejada > posicaoAtual)        % Se está acima do limite SUPERIOR e o alvo está na mesma direção (tentando ir mais alto)
+                        fprintf('Set: %.2f | Atual: %.2f | Erro: %.2f | PWM Calc: %.2f | PWM Aplicado: %.2f\n', ...
+                    posicaoDesejada, posicaoAtual, erro, Kp * erro, pwmToApply);
             disp('!!! FIM DE CURSO ATINGIDO OU EXCEDIDO! PARANDO MOTOR IMEDIATAMENTE !!!');
-            fprintf('Set: %.2f | Atual: %.2f | Erro: %.2f | P: %.2f | I: %.2f | D: %.2f | PID Bruto: %.2f | PWM Aplicado: %.2f\n', ...
-                posicaoDesejada, posicaoAtual, erro, termoP, Ki * integralErro, termoD, rawPidOutput, pwmToApply);
             writePWMDutyCycle(a, motorPin1, 0);
             writePWMDutyCycle(a, motorPin2, 0);
             % Registra os últimos pontos antes de parar
@@ -135,10 +126,9 @@ try
         
         % Inicializa pwmToApply para esta iteração
         pwmToApply = 0; 
-        rawPidOutput = 0; % Variável para armazenar a saída PID ANTES da saturação
-        
+
         % G. Controlar a Direção do Motor com os Pinos PWM
-        % Nova lógica: Se o erro estiver dentro da zona morta, considera o target atingido e para o script.
+        % Se o erro estiver dentro da zona morta, considera o target atingido e para o script.
         if abs(erro) < erroZonaMorta 
             disp(' ');
             disp('!!! TARGET ATINGIDO DENTRO DA ZONA MORTA! PARANDO O SCRIPT !!!');
@@ -151,51 +141,29 @@ try
             pwmAplicadoRegistro = [pwmAplicadoRegistro; 0]; % PWM 0 ao atingir o alvo
             break; % Sai do loop de controle e finaliza o script via 'finally'
         else % Erro fora da zona morta, aplicar controle
-            % D. Calcular os termos PID (o termo I é condicionalmente atualizado)
-            termoP = Kp * erro;
-            
-            % Termo Derivativo
-            derivadaErro = (erro - erroAnterior) / samplePeriod;
-            termoD = Kd * derivadaErro; % Kd é 0 neste caso, então termoD será 0
+            % D. Calcular a Saída do Controlador Proporcional (PWM)
+            pwmOutput = Kp * erro;
 
-            % Saída do controlador PID ANTES da saturação e anti-windup (para determinar a necessidade de integrar)
-            % Aqui calculamos o pidOutput como se não houvesse saturação, apenas para saber a direção
-            % e magnitude bruta que o controlador está pedindo.
-            rawPidOutput = termoP + Ki * integralErro; % Usa o integralErro atual
-
-            % E. Anti-Windup por Clamping: Atualiza integralErro APENAS se a saída não estiver saturada
-            % ou se o erro e a saturação "concordam" na direção (ajudando a sair da saturação)
-            if (rawPidOutput < pwmMax && rawPidOutput > -pwmMax) || ... % Não saturado
-               (rawPidOutput >= pwmMax && erro > 0) || ...             % Saturado positivo, mas erro ainda positivo (precisa de mais I)
-               (rawPidOutput <= -pwmMax && erro < 0)                   % Saturado negativo, mas erro ainda negativo (precisa de mais I)
-                integralErro = integralErro + erro * samplePeriod;
-            end
-
-            % Saída final do controlador PID, considerando o termo integral atualizado
-            pidOutput = termoP + Ki * integralErro;
-
-            % F. Limitar o PWM calculado
-            % Saturamos a saída do controlador para os limites de PWM do motor
-            pwmToApply = min(abs(pidOutput), pwmMax);
+            % F. Limitar o PWM calculado entre 0 e pwmMax
+            pwmToApply = min(abs(pwmOutput), pwmMax);
 
             % Aplica o PWM mínimo de ativação
             if pwmToApply > 0 && pwmToApply < pwmMinAtivacao
                 pwmToApply = pwmMinAtivacao;
             end
             
-            if pidOutput > 0 % Motor gira em uma direção (aumenta o ângulo)
+            if erro > 0 
                 writePWMDutyCycle(a, motorPin1, pwmToApply);
                 writePWMDutyCycle(a, motorPin2, 0);
-            else % Motor gira na direção oposta (diminui o ângulo)
+            else 
                 writePWMDutyCycle(a, motorPin1, 0);
                 writePWMDutyCycle(a, motorPin2, pwmToApply);
             end
         end
 
         % H. Exibir status no console (para depuração)
-        % Inclui rawPidOutput para ver o que o PID quer ANTES da saturação
-        fprintf('Set: %.2f | Atual: %.2f | Erro: %.2f | P: %.2f | I: %.2f | D: %.2f | PID Bruto: %.2f | PWM Aplicado: %.2f\n', ...
-                posicaoDesejada, posicaoAtual, erro, termoP, Ki * integralErro, termoD, rawPidOutput, pwmToApply);
+        fprintf('Set: %.2f | Atual: %.2f | Erro: %.2f | PWM Calc: %.2f | PWM Aplicado: %.2f\n', ...
+                posicaoDesejada, posicaoAtual, erro, Kp * erro, pwmToApply);
 
         % I. Registrar dados para o gráfico
         tempoRegistro = [tempoRegistro; toc(tempoInicioControle)];
@@ -203,14 +171,11 @@ try
         posicaoDesejadaRegistro = [posicaoDesejadaRegistro; posicaoDesejada];
         
         % O PWM aplicado precisa ter o sinal para o gráfico representar o controle de forma mais clara
-        if pidOutput > 0 
+        if erro > 0 
             pwmAplicadoRegistro = [pwmAplicadoRegistro; pwmToApply];
         else 
             pwmAplicadoRegistro = [pwmAplicadoRegistro; -pwmToApply]; % Adiciona o sinal negativo para visualização
         end
-
-        % Atualiza erroAnterior para a próxima iteração
-        erroAnterior = erro;
 
         % J. Pequeno atraso para manter o período de amostragem
         pause(samplePeriod);
@@ -300,9 +265,9 @@ if ~isempty(tempoRegistro)
 
     % Check if sgtitle is available (R2018a and later)
     if exist('sgtitle', 'file') == 2
-        sgtitle('Análise do Controlador PID de Posição'); % Overall title for the figure
+        sgtitle('Análise do Controlador P Simples'); % Overall title for the figure
     else
-        set(gcf, 'Name', 'Análise do Controlador PID de Posição'); % Fallback for older versions
+        set(gcf, 'Name', 'Análise do Controlador P Simples'); % Fallback for older versions
     end
 else
     disp('Nenhum dado de controle registrado para plotar o gráfico.');

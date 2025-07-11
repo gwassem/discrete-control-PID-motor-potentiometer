@@ -63,7 +63,7 @@ catch ME
 end
 
 % --- 3. PARÂMETROS DO CONTROLADOR P ---
-Kp = 0.002;      % GANHO PROPORCIONAL: Ajuste este valor.
+Kp = 0.05;      % GANHO PROPORCIONAL: Ajuste este valor.
 pwmMax = 0.8;    % Duty Cycle Máximo (100% PWM)
 pwmMinAtivacao = 0.1; % Opcional: PWM mínimo para superar atrito.
 erroZonaMorta = 5; % [graus] Margem de erro em que o motor é considerado "no alvo".
@@ -108,6 +108,8 @@ try
         % SE o motor atingir um dos limites de 5% dos fins de curso, DESLIGAR IMEDIATAMENTE.
         if (posicaoAtual < angleLimitLower && posicaoDesejada < posicaoAtual) || ... % Se está abaixo do limite INFERIOR e o alvo está na mesma direção (tentando ir mais baixo)
            (posicaoAtual > angleLimitUpper && posicaoDesejada > posicaoAtual)        % Se está acima do limite SUPERIOR e o alvo está na mesma direção (tentando ir mais alto)
+            fprintf('Set: %.2f | Atual: %.2f | Erro: %.2f | PWM Calc: %.2f | PWM Aplicado: %.2f\n', ...
+            posicaoDesejada, posicaoAtual, erro, Kp * erro, pwmToApply);
             disp('!!! FIM DE CURSO ATINGIDO OU EXCEDIDO! PARANDO MOTOR IMEDIATAMENTE !!!');
             writePWMDutyCycle(a, motorPin1, 0);
             writePWMDutyCycle(a, motorPin2, 0);
